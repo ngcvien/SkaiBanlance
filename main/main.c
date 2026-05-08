@@ -30,6 +30,8 @@
 #include "stepper_driver.h"
 #include "robot_control.h"
 
+#include "mpu6050_driver.h"
+
 int wakeup_flag = 0;
 static const esp_afe_sr_iface_t *afe_handle = NULL;
 static volatile int task_flag = 0;
@@ -247,4 +249,15 @@ void app_main()
     task_flag = 1;
     xTaskCreatePinnedToCore(&detect_Task, "detect", 16 * 1024, (void*)afe_data, 5, NULL, 1);
     xTaskCreatePinnedToCore(&feed_Task, "feed", 16 * 1024, (void*)afe_data, 5, NULL, 0);
+
+    mpu6050_init();
+
+    // while(1) {
+    //     // float goc_nghieng = mpu6050_get_smoothed_pitch();
+        
+    //     // // In ra chuẩn định dạng của Serial Plotter để xem đồ thị trực quan
+    //     // printf(">Goc_Nghieng:%.2f\n", goc_nghieng);
+        
+    //     // vTaskDelay(pdMS_TO_TICKS(10)); // Lấy mẫu liên tục mỗi 10ms (100Hz)
+    // }
 }
