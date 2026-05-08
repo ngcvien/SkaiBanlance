@@ -10,6 +10,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "nvs_flash.h"
+
 #include "esp_wn_iface.h"
 #include "esp_wn_models.h"
 #include "esp_afe_sr_iface.h"
@@ -22,6 +24,7 @@
 #include "esp_process_sdkconfig.h"
 
 #include "robot_cmds.h"
+#include "ble_server.h"
 
 int wakeup_flag = 0;
 static const esp_afe_sr_iface_t *afe_handle = NULL;
@@ -177,6 +180,14 @@ void detect_Task(void *arg)
 
 void app_main()
 {
+
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
     models = esp_srmodel_init("model"); // partition label defined in partitions.csv
     ESP_ERROR_CHECK(esp_board_init(AUDIO_HAL_16K_SAMPLES, 1, 16));
     // ESP_ERROR_CHECK(esp_sdcard_init("/sdcard", 10));
@@ -185,6 +196,8 @@ void app_main()
     // Khoi tao Robot Core ---
     robot_core_init();
     xTaskCreatePinnedToCore(&command_manager_task, "Cmd_Task", 2048, NULL, 5, NULL, 1);
+
+    ble_server_init();
     // ---------------------------------
 
     esp_afe_sr_data_t *afe_data = NULL;

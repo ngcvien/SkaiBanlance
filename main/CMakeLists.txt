@@ -8,4 +8,4 @@ set(requires
     )
 
 idf_component_register(SRCS ${srcs}
-                       REQUIRES ${requires})
+                       REQUIRES ${requires} ble_server nvs_flash)
