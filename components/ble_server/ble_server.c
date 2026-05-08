@@ -10,6 +10,10 @@
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
 
+#include "pid_controller.h"
+
+extern pid_context_t balance_pid;
+
 // --- KHAI BÁO 128-BIT UUID (Giao thức Nordic UART) ---
 // NimBLE yêu cầu byte mảng UUID phải đảo ngược (Little-Endian)
 // Service: 6E400001-B5A3-F393-E0A9-E50E24DCCA9E
@@ -68,7 +72,15 @@ static int gatt_svr_chr_write(uint16_t conn_handle, uint16_t attr_handle,
         float kp, ki, kd;
         if (sscanf(rx_str + 4, "%f,%f,%f", &kp, &ki, &kd) == 3) {
             printf(">>> UPDATE PID -> Kp: %.2f | Ki: %.2f | Kd: %.2f\n", kp, ki, kd);
-            // TODO: Gán vào biến PID toàn cục của hệ thống sau
+            
+            // CẬP NHẬT TRỰC TIẾP VÀO HỆ THỐNG
+            balance_pid.kp = kp;
+            balance_pid.ki = ki;
+            balance_pid.kd = kd;
+
+            // QUAN TRỌNG: Reset PID để xóa các sai số tích lũy cũ (error_sum)
+            // Nếu không reset, robot có thể bị giật mạnh ngay khi đổi số
+            pid_reset(&balance_pid); 
         }
     }
 

@@ -68,7 +68,7 @@ void stepper_set_speed(float speed_left, float speed_right) {
         ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
     } else {
         // Cài đặt chiều quay
-        gpio_set_level(STEPPER_LEFT_DIR, (speed_left > 0) ? 1 : 0);
+        gpio_set_level(STEPPER_LEFT_DIR, (speed_left > 0) ? 0 : 1);
         
         // Nạp tần số mới trực tiếp vào phần cứng (Số bước / giây)
         ledc_set_freq(LEDC_LOW_SPEED_MODE, LEDC_TIMER_0, (uint32_t)fabs(speed_left));
@@ -84,7 +84,7 @@ void stepper_set_speed(float speed_left, float speed_right) {
         ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
     } else {
         // Thường bánh phải lắp ngược hướng vật lý với bánh trái, nên logic DIR sẽ đảo lại
-        gpio_set_level(STEPPER_RIGHT_DIR, (speed_right > 0) ? 0 : 1);
+        gpio_set_level(STEPPER_RIGHT_DIR, (speed_right > 0) ? 1 : 0);
         
         ledc_set_freq(LEDC_LOW_SPEED_MODE, LEDC_TIMER_1, (uint32_t)fabs(speed_right));
         

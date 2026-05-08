@@ -31,6 +31,9 @@
 #include "robot_control.h"
 
 #include "mpu6050_driver.h"
+#include "pid_controller.h"
+
+pid_context_t balance_pid;
 
 int wakeup_flag = 0;
 static const esp_afe_sr_iface_t *afe_handle = NULL;
@@ -185,6 +188,36 @@ void detect_Task(void *arg)
 }
 
 
+void balance_task(void *arg) {
+    float dt = 0.01f; // 10ms = 0.01s
+    TickType_t xLastWakeTime = xTaskGetTickCount();
+    const TickType_t xFrequency = pdMS_TO_TICKS(10); // Chu kỳ chuẩn xác 10ms
+
+    while(1) {
+        // 1. Đọc góc nghiêng mượt mà từ MPU6050
+        float current_pitch = mpu6050_get_smoothed_pitch();
+
+        // 2. Kiểm tra an toàn: Nếu ngã quá 45 độ -> Tắt động cơ để bảo vệ
+        if (current_pitch > 45.0f || current_pitch < -45.0f) {
+            stepper_set_speed(0, 0);
+            pid_reset(&balance_pid); // Xóa nháp PID
+        } 
+        else {
+            // 3. Tính toán PID: Mục tiêu (Setpoint) là 0 độ (Đứng thẳng)
+            // Lưu ý: Nếu trọng tâm robot không chuẩn, setpoint có thể là 2.5 độ hoặc -1.0 độ
+            float target_angle = 0.0f; 
+            float motor_speed = pid_compute(&balance_pid, target_angle, current_pitch, dt);
+
+            // 4. Bơm tốc độ ra 2 bánh xe
+            stepper_set_speed(motor_speed, motor_speed);
+        }
+
+        // 5. Ngủ chính xác cho đến chu kỳ tiếp theo (Đảm bảo dt luôn là 0.01s)
+        vTaskDelayUntil(&xLastWakeTime, xFrequency);
+    }
+}
+
+
 void app_main()
 {
 
@@ -208,6 +241,16 @@ void app_main()
     stepper_driver_init();
     robot_control_task_start();
     printf(">>> ĐỘNG CƠ ĐÃ SẴN SÀNG!\n");
+
+    mpu6050_init();
+    stepper_driver_init();
+
+    // Khởi tạo PID: Kp, Ki, Kd, Tốc độ tối đa (ví dụ 1500 bước/s)
+    // CÁC CHỈ SỐ NÀY ĐANG ĐỂ TẠM, PHẢI TÌM GIÁ TRỊ THỰC TẾ
+    pid_init(&balance_pid, 250.0f, 0.0f, 0.8f, 1500.0f);
+
+    // Kích hoạt Task cân bằng (Ưu tiên cao nhất để không bị Bluetooth ngắt quãng)
+    xTaskCreate(balance_task, "balance_task", 4096, NULL, 10, NULL);
     // stepper_set_speed(20.0, 20.0); // Chạy tiến với tốc độ 400 steps/s
     // xTaskCreate(robot_control_task, "robot_ctrl_task", 4096, NULL, 5, NULL);
     // ---------------------------------
@@ -250,7 +293,6 @@ void app_main()
     xTaskCreatePinnedToCore(&detect_Task, "detect", 16 * 1024, (void*)afe_data, 5, NULL, 1);
     xTaskCreatePinnedToCore(&feed_Task, "feed", 16 * 1024, (void*)afe_data, 5, NULL, 0);
 
-    mpu6050_init();
 
     // while(1) {
     //     // float goc_nghieng = mpu6050_get_smoothed_pitch();

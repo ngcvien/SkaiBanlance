@@ -8,6 +8,7 @@ set(requires
     stepper_driver
     hardware_config
     mpu6050_driver
+    pid_controller
     )
 
 idf_component_register(SRCS ${srcs}
