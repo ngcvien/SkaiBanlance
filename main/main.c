@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 
 #include "nvs_flash.h"
 
@@ -25,6 +26,9 @@
 
 #include "robot_cmds.h"
 #include "ble_server.h"
+
+#include "stepper_driver.h"
+#include "robot_control.h"
 
 int wakeup_flag = 0;
 static const esp_afe_sr_iface_t *afe_handle = NULL;
@@ -178,6 +182,7 @@ void detect_Task(void *arg)
     vTaskDelete(NULL);
 }
 
+
 void app_main()
 {
 
@@ -195,10 +200,16 @@ void app_main()
     //d:\Projects\ESP32\esp-skainet\examples\en_speech_commands_recognition\main\speech_commands_action.c
     // Khoi tao Robot Core ---
     robot_core_init();
-    xTaskCreatePinnedToCore(&command_manager_task, "Cmd_Task", 2048, NULL, 5, NULL, 1);
+    // xTaskCreatePinnedToCore(&command_manager_task, "Cmd_Task", 2048, NULL, 5, NULL, 1);  // Xóa: gây race condition với robot_control_task
 
     ble_server_init();
+    stepper_driver_init();
+    robot_control_task_start();
+    printf(">>> ĐỘNG CƠ ĐÃ SẴN SÀNG!\n");
+    // stepper_set_speed(20.0, 20.0); // Chạy tiến với tốc độ 400 steps/s
+    // xTaskCreate(robot_control_task, "robot_ctrl_task", 4096, NULL, 5, NULL);
     // ---------------------------------
+
 
     esp_afe_sr_data_t *afe_data = NULL;
 

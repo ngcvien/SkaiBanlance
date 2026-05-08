@@ -19,6 +19,5 @@ extern QueueHandle_t robot_cmd_queue;
 
 // Khai bao ham
 void robot_core_init(void);
-void command_manager_task(void *pvParameters);
 
 #endif
