@@ -62,7 +62,7 @@ void stepper_driver_init(void) {
 
 void stepper_set_speed(float speed_left, float speed_right) {
     // --- XỬ LÝ BÁNH TRÁI ---
-    if (fabs(speed_left) < 10.0f) {
+    if (fabs(speed_left) < 45.0f) {
         // Nếu tốc độ quá nhỏ, tắt phát xung để dừng động cơ
         ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0);
         ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
@@ -79,7 +79,7 @@ void stepper_set_speed(float speed_left, float speed_right) {
     }
 
     // --- XỬ LÝ BÁNH PHẢI ---
-    if (fabs(speed_right) < 10.0f) {
+    if (fabs(speed_right) < 45.0f) {
         ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, 0);
         ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
     } else {

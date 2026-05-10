@@ -245,9 +245,9 @@ void app_main()
     mpu6050_init();
     stepper_driver_init();
 
-    // Khởi tạo PID: Kp, Ki, Kd, Tốc độ tối đa (ví dụ 1500 bước/s)
+    // Khởi tạo PID: Kp, Ki, Kd, Tốc độ tối đa (ví dụ 3000 bước/s)
     // CÁC CHỈ SỐ NÀY ĐANG ĐỂ TẠM, PHẢI TÌM GIÁ TRỊ THỰC TẾ
-    pid_init(&balance_pid, 250.0f, 0.0f, 0.8f, 1500.0f);
+    pid_init(&balance_pid, 600.0f, 0.0f, 0.7f, 9000.0f);
 
     // Kích hoạt Task cân bằng (Ưu tiên cao nhất để không bị Bluetooth ngắt quãng)
     xTaskCreate(balance_task, "balance_task", 4096, NULL, 10, NULL);
@@ -294,12 +294,12 @@ void app_main()
     xTaskCreatePinnedToCore(&feed_Task, "feed", 16 * 1024, (void*)afe_data, 5, NULL, 0);
 
 
-    // while(1) {
-    //     // float goc_nghieng = mpu6050_get_smoothed_pitch();
+    while(1) {
+        float goc_nghieng = mpu6050_get_smoothed_pitch();
         
-    //     // // In ra chuẩn định dạng của Serial Plotter để xem đồ thị trực quan
-    //     // printf(">Goc_Nghieng:%.2f\n", goc_nghieng);
+        // In ra chuẩn định dạng của Serial Plotter để xem đồ thị trực quan
+        printf(">Goc_Nghieng:%.2f\n", goc_nghieng);
         
-    //     // vTaskDelay(pdMS_TO_TICKS(10)); // Lấy mẫu liên tục mỗi 10ms (100Hz)
-    // }
+        vTaskDelay(pdMS_TO_TICKS(10)); // Lấy mẫu liên tục mỗi 10ms (100Hz)
+    }
 }
