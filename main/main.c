@@ -195,7 +195,7 @@ void balance_task(void *arg) {
 
     while(1) {
         // 1. Đọc góc nghiêng mượt mà từ MPU6050
-        float current_pitch = mpu6050_get_smoothed_pitch();
+        float current_pitch = mpu6050_get_smoothed_pitch() - (-0.7f); // Hiệu chỉnh nếu cần thiết (ví dụ: nếu robot hơi nghiêng về một bên khi đứng yên)
 
         // 2. Kiểm tra an toàn: Nếu ngã quá 45 độ -> Tắt động cơ để bảo vệ
         if (current_pitch > 45.0f || current_pitch < -45.0f) {
@@ -247,7 +247,7 @@ void app_main()
 
     // Khởi tạo PID: Kp, Ki, Kd, Tốc độ tối đa (ví dụ 3000 bước/s)
     // CÁC CHỈ SỐ NÀY ĐANG ĐỂ TẠM, PHẢI TÌM GIÁ TRỊ THỰC TẾ
-    pid_init(&balance_pid, 600.0f, 0.0f, 0.7f, 9000.0f);
+    pid_init(&balance_pid, 1250.0f, 0.0f, 0.08f, 25000.0f);
 
     // Kích hoạt Task cân bằng (Ưu tiên cao nhất để không bị Bluetooth ngắt quãng)
     xTaskCreate(balance_task, "balance_task", 4096, NULL, 10, NULL);
@@ -295,10 +295,10 @@ void app_main()
 
 
     while(1) {
-        float goc_nghieng = mpu6050_get_smoothed_pitch();
+        // float goc_nghieng = mpu6050_get_smoothed_pitch();
         
         // In ra chuẩn định dạng của Serial Plotter để xem đồ thị trực quan
-        printf(">Goc_Nghieng:%.2f\n", goc_nghieng);
+        // printf(">Goc_Nghieng:%.2f\n", goc_nghieng);
         
         vTaskDelay(pdMS_TO_TICKS(10)); // Lấy mẫu liên tục mỗi 10ms (100Hz)
     }
