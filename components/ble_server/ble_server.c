@@ -1,5 +1,6 @@
 #include "ble_server.h"
 #include "robot_cmds.h"
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -32,6 +33,7 @@ static const ble_uuid128_t gatt_svr_chr_tx_uuid =
 static uint8_t own_addr_type;
 static uint16_t ble_conn_handle = BLE_HS_CONN_HANDLE_NONE; // Lưu ID kết nối với điện thoại
 uint16_t tx_handle; // Lưu ID của cổng TX để gửi Notify
+static volatile bool telemetry_notify_enabled = false;
 
 static void ble_app_advertise(void);
 
@@ -64,7 +66,9 @@ static int gatt_svr_chr_write(uint16_t conn_handle, uint16_t attr_handle,
         }
 
         if (robot_cmd != CMD_NONE) {
-            xQueueSend(robot_cmd_queue, &robot_cmd, 0);
+            if (!robot_cmd_send(robot_cmd)) {
+                printf(">>> BLE: Khong the gui lenh vao queue\n");
+            }
         }
     }
     // Phân tích Lệnh PID
@@ -122,6 +126,7 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg) {
         case BLE_GAP_EVENT_CONNECT:
             if (event->connect.status == 0) {
                 ble_conn_handle = event->connect.conn_handle;
+                telemetry_notify_enabled = false;
                 printf(">>> BLE: App Android da ket noi thanh cong!\n");
             } else {
                 ble_app_advertise();
@@ -130,10 +135,16 @@ static int ble_gap_event(struct ble_gap_event *event, void *arg) {
         case BLE_GAP_EVENT_DISCONNECT:
             printf(">>> BLE: App ngat ket noi! Dang phat song lai...\n");
             ble_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+            telemetry_notify_enabled = false;
+            robot_cmd_send(CMD_STOP);
             ble_app_advertise();
             break;
         case BLE_GAP_EVENT_SUBSCRIBE:
-            printf(">>> BLE: App da dang ky lang nghe Telemetry (Notify)!\n");
+            if (event->subscribe.attr_handle == tx_handle) {
+                telemetry_notify_enabled = event->subscribe.cur_notify != 0;
+                printf(">>> BLE: Telemetry Notify %s\n",
+                       telemetry_notify_enabled ? "BAT" : "TAT");
+            }
             break;
     }
     return 0;
@@ -195,9 +206,9 @@ void ble_server_init(void) {
 // --- HÀM PUBLIC ĐỂ ESP GỬI DỮ LIỆU LÊN APP ---
 void ble_server_send_roll(float angle) {
     // Chỉ gửi khi App đang mở và kết nối
-    if (ble_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
+    if (ble_conn_handle != BLE_HS_CONN_HANDLE_NONE && telemetry_notify_enabled) {
         char tx_str[32];
-        snprintf(tx_str, sizeof(tx_str), "ROLL:%.1f\n", angle); // Định dạng ROLL:12.5\n
+        snprintf(tx_str, sizeof(tx_str), "ROLL:%.1f", angle);
         
         // Đóng gói thành mbuf và gửi qua Notify
         struct os_mbuf *om = ble_hs_mbuf_from_flat(tx_str, strlen(tx_str));

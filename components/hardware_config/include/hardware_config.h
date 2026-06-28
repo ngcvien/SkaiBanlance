@@ -25,4 +25,7 @@
 #define STEPPER_RIGHT_STEP  (GPIO_NUM_14)
 #define STEPPER_RIGHT_DIR   (GPIO_NUM_15)
 
+/* Voice wake-word and command activity LED */
+#define VOICE_CMD_LED_GPIO  (GPIO_NUM_1)
+
 #endif // HARDWARE_CONFIG_H

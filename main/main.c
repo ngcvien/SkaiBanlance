@@ -119,6 +119,7 @@ void detect_Task(void *arg)
 
         if (res->wakeup_state == WAKENET_DETECTED) {
             printf("WAKEWORD DETECTED\n");
+            robot_activity_led_pulse();
 	        multinet->clean(model_data);
         }
 
@@ -159,7 +160,9 @@ void detect_Task(void *arg)
                     }
 
                     if (robot_cmd != CMD_NONE) {
-                        xQueueSend(robot_cmd_queue, &robot_cmd, 0);
+                        if (!robot_cmd_send(robot_cmd)) {
+                            printf("Khong the gui lenh giong noi vao queue\n");
+                        }
                     }
                 }
                 // ------------------------------------------
@@ -243,8 +246,8 @@ float target_position = 0.0f;
 
 
 // 1. Khai báo các thông số cho thuật toán tự học trọng tâm
-float dynamic_offset = -0.1f; // Bắt đầu bằng góc bù vật lý bạn đã đo được bằng tay
-float offset_learning_rate = 0.000004f; // Tốc độ tự học (Phải là một số CỰC KỲ nhỏ)
+float dynamic_offset = 4.3f; // Bắt đầu bằng góc bù vật lý bạn đã đo được bằng tay
+float offset_learning_rate = 0.000002f; // Tốc độ tự học (Phải là một số CỰC KỲ nhỏ)
 
 /// @brief Task cân bằng robot 2 bánh dựa trên dữ liệu góc nghiêng từ MPU6050 và thuật toán PID, 
 /// với khả năng tự học trọng tâm
@@ -256,14 +259,42 @@ void balance_task(void *arg) {
 
     float motor_speed = 0.0f; 
     float filtered_motor_speed = 0.0f; 
+    float commanded_angle = 0.0f;
+    float commanded_turn = 0.0f;
 
     while(1) {
+        robot_motion_setpoint_t motion;
+        robot_control_get_setpoint(&motion);
+
+        // Ramp commands so direction changes do not jerk the chassis.
+        const float angle_step = 0.008f;  // 0.8 degree/s at 100 Hz
+        const float turn_step = 8.0f;     // 800 steps/s^2 at 100 Hz
+
+        if (commanded_angle < motion.target_angle_deg) {
+            commanded_angle += angle_step;
+            if (commanded_angle > motion.target_angle_deg) commanded_angle = motion.target_angle_deg;
+        } else if (commanded_angle > motion.target_angle_deg) {
+            commanded_angle -= angle_step;
+            if (commanded_angle < motion.target_angle_deg) commanded_angle = motion.target_angle_deg;
+        }
+
+        if (commanded_turn < motion.turn_speed_steps_s) {
+            commanded_turn += turn_step;
+            if (commanded_turn > motion.turn_speed_steps_s) commanded_turn = motion.turn_speed_steps_s;
+        } else if (commanded_turn > motion.turn_speed_steps_s) {
+            commanded_turn -= turn_step;
+            if (commanded_turn < motion.turn_speed_steps_s) commanded_turn = motion.turn_speed_steps_s;
+        }
+
         // a. Lọc nhiễu tốc độ động cơ để làm mượt quá trình tự học
-        filtered_motor_speed = (0.8f * filtered_motor_speed) + (0.2f * motor_speed);
+        filtered_motor_speed = (0.92f * filtered_motor_speed) + (0.2f * motor_speed);
 
         // b. Cập nhật góc bù tự động dựa trên tốc độ trôi
         // LƯU Ý: Nếu xe trôi tới mà càng chạy nhanh hơn, hãy lật dấu cộng (+) thành trừ (-)
-        dynamic_offset += (filtered_motor_speed * offset_learning_rate);
+        // Do not let center-of-gravity learning cancel an intentional movement.
+        if (motion.target_angle_deg == 0.0f && motion.turn_speed_steps_s == 0.0f) {
+            dynamic_offset += (filtered_motor_speed * offset_learning_rate);
+        }
 
         // c. Khóa an toàn: Không cho phép robot tự bù quá +- 1 độ so với thiết kế gốc
         if (dynamic_offset > 1.0f) dynamic_offset = 1.0f;
@@ -279,19 +310,23 @@ void balance_task(void *arg) {
             stepper_reset_step();
             motor_speed = 0.0f;
             filtered_motor_speed = 0.0f;
+            commanded_angle = 0.0f;
+            commanded_turn = 0.0f;
+            robot_control_emergency_stop();
             
             // Tùy chọn: Bạn có thể giữ nguyên dynamic_offset để nó nhớ trọng tâm, 
             // hoặc reset về 2.0f nếu muốn nó học lại từ đầu mỗi khi ngã.
         } 
         else {
             // f. PID Góc chỉ cần cố gắng giữ xe ở mức 0 độ (vì offset đã lo phần trọng tâm)
-            float target_angle = 0.0f; 
+            float target_angle = commanded_angle;
 
             // Tính toán PID Góc
             motor_speed = pid_compute(&balance_pid, target_angle, current_pitch, dt);
 
             // Truyền xuống Driver điều khiển động cơ
-            stepper_set_speed(motor_speed, motor_speed);
+            stepper_set_speed(motor_speed - commanded_turn,
+                              motor_speed + commanded_turn);
         }
 
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
@@ -405,11 +440,8 @@ void app_main()
 
 
     while(1) {
-        // float goc_nghieng = mpu6050_get_smoothed_pitch();
-        
-        // In ra chuẩn định dạng của Serial Plotter để xem đồ thị trực quan
-        // printf(">Goc_Nghieng:%.2f\n", goc_nghieng);
-        
-        vTaskDelay(pdMS_TO_TICKS(10)); // Lấy mẫu liên tục mỗi 10ms (100Hz)
+        // Cached read keeps BLE telemetry from disturbing the 100 Hz MPU/PID loop.
+        ble_server_send_roll(mpu6050_get_cached_pitch());
+        vTaskDelay(pdMS_TO_TICKS(100)); // Send telemetry at 10 Hz.
     }
 }

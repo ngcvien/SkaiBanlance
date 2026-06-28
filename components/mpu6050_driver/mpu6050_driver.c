@@ -11,7 +11,7 @@
 #define ALPHA           0.98f   // Hệ số lọc bù (98% tin Gyro, 2% tin Accel)
 
 static const char *TAG = "MPU_DRIVER";
-static float current_pitch = 0.0f;
+static volatile float current_pitch = 0.0f;
 static uint64_t last_time_us = 0;
 
 // Hàm hỗ trợ ghi 1 byte vào thanh ghi của MPU6050
@@ -97,5 +97,9 @@ float mpu6050_get_smoothed_pitch(void) {
     // 4. ÁP DỤNG COMPLEMENTARY FILTER
     current_pitch = ALPHA * (current_pitch + gyro_rate * dt) + (1.0f - ALPHA) * accel_pitch;
 
+    return current_pitch;
+}
+
+float mpu6050_get_cached_pitch(void) {
     return current_pitch;
 }

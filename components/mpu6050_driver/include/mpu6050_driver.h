@@ -9,5 +9,6 @@ esp_err_t mpu6050_init(void);
 // Hàm đọc dữ liệu và chạy thuật toán lọc. 
 // Trả về góc nghiêng mượt mà (Pitch) tính bằng Độ.
 float mpu6050_get_smoothed_pitch(void);
+float mpu6050_get_cached_pitch(void);
 
 #endif

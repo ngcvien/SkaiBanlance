@@ -3,6 +3,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include <stdbool.h>
 
 // Danh sach lenh robot
 typedef enum {
@@ -19,5 +20,7 @@ extern QueueHandle_t robot_cmd_queue;
 
 // Khai bao ham
 void robot_core_init(void);
+bool robot_cmd_send(robot_cmd_t cmd);
+void robot_activity_led_pulse(void);
 
 #endif
