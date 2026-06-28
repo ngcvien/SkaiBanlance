@@ -1,13 +1,66 @@
 #include "stepper_driver.h"
 #include "hardware_config.h"
 #include "driver/gpio.h"
-#include "driver/ledc.h" // Thư viện điều khiển xung phần cứng của ESP-IDF
+#include "driver/gptimer.h" // Sử dụng thư viện Hardware Timer
+#include "esp_attr.h"
 #include <math.h>
 
+// ==========================================
+// CẤU HÌNH ĐẢO CHIỀU ĐỘNG CƠ TẠI ĐÂY
+// Nếu robot ngã tới mà bánh xe lùi lại, hãy đổi 1 thành -1 ở bánh xe tương ứng
+#define LEFT_REVERSE  -1
+#define RIGHT_REVERSE 1 
+// ==========================================
+
+// Biến toàn cục đếm số bước
+static volatile int32_t step_count_left = 0;
+static volatile int32_t step_count_right = 0;
+
+// Chiều chuyển động logic của xe (1: Tiến, -1: Lùi).
+// Chiều này độc lập với mức DIR vật lý vì hai motor được lắp đối xứng.
+static volatile int8_t dir_left = 1;
+static volatile int8_t dir_right = 1;
+
+// Trạng thái chân STEP (Bật/Tắt)
+static volatile bool pin_state_left = false;
+static volatile bool pin_state_right = false;
+
+// Trình quản lý Hardware Timer
+static gptimer_handle_t timer_left = NULL;
+static gptimer_handle_t timer_right = NULL;
+static bool timer_left_running = false;
+static bool timer_right_running = false;
+
+// Hàm ngắt (ISR) cho Bánh Trái
+static bool IRAM_ATTR timer_left_isr(gptimer_handle_t timer, const gptimer_alarm_event_data_t *edata, void *user_data) {
+    if (!pin_state_left) {
+        step_count_left += dir_left; // Cộng hoặc trừ bước đi
+        gpio_set_level(STEPPER_LEFT_STEP, 1);
+        pin_state_left = true;
+    } else {
+        gpio_set_level(STEPPER_LEFT_STEP, 0);
+        pin_state_left = false;
+    }
+    return false;
+}
+
+// Hàm ngắt (ISR) cho Bánh Phải
+static bool IRAM_ATTR timer_right_isr(gptimer_handle_t timer, const gptimer_alarm_event_data_t *edata, void *user_data) {
+    if (!pin_state_right) {
+        step_count_right += dir_right;
+        gpio_set_level(STEPPER_RIGHT_STEP, 1);
+        pin_state_right = true;
+    } else {
+        gpio_set_level(STEPPER_RIGHT_STEP, 0);
+        pin_state_right = false;
+    }
+    return false;
+}
+
 void stepper_driver_init(void) {
-    // 1. Cấu hình chân DIR (Hướng quay) thành Output bình thường
     gpio_config_t io_conf = {
-        .pin_bit_mask = (1ULL<<STEPPER_LEFT_DIR) | (1ULL<<STEPPER_RIGHT_DIR),
+        .pin_bit_mask = (1ULL<<STEPPER_LEFT_STEP) | (1ULL<<STEPPER_LEFT_DIR) | 
+                        (1ULL<<STEPPER_RIGHT_STEP) | (1ULL<<STEPPER_RIGHT_DIR),
         .mode = GPIO_MODE_OUTPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -15,80 +68,88 @@ void stepper_driver_init(void) {
     };
     gpio_config(&io_conf);
 
-    // 2. Cấu hình Bộ đếm giờ (Timer) của LEDC
-    // Timer 0 cho Bánh Trái
-    ledc_timer_config_t timer_left = {
-        .speed_mode       = LEDC_LOW_SPEED_MODE,
-        .timer_num        = LEDC_TIMER_0,
-        .duty_resolution  = LEDC_TIMER_10_BIT, // Độ phân giải xung 10-bit (0-1023)
-        .freq_hz          = 100,               // Tần số khởi tạo tạm thời
-        .clk_cfg          = LEDC_AUTO_CLK
+    // Cấu hình Timer đếm với tần số 1MHz (1 micro-giây mỗi nhịp)
+    gptimer_config_t timer_config = {
+        .clk_src = GPTIMER_CLK_SRC_DEFAULT,
+        .direction = GPTIMER_COUNT_UP,
+        .resolution_hz = 1000000, 
     };
-    ledc_timer_config(&timer_left);
+    gptimer_new_timer(&timer_config, &timer_left);
+    gptimer_new_timer(&timer_config, &timer_right);
 
-    // Timer 1 cho Bánh Phải (Dùng Timer riêng để 2 bánh có thể chạy tốc độ khác nhau)
-    ledc_timer_config_t timer_right = {
-        .speed_mode       = LEDC_LOW_SPEED_MODE,
-        .timer_num        = LEDC_TIMER_1,
-        .duty_resolution  = LEDC_TIMER_10_BIT,
-        .freq_hz          = 100,
-        .clk_cfg          = LEDC_AUTO_CLK
-    };
-    ledc_timer_config(&timer_right);
+    gptimer_event_callbacks_t cbs_left = { .on_alarm = timer_left_isr };
+    gptimer_register_event_callbacks(timer_left, &cbs_left, NULL);
+    gptimer_enable(timer_left);
 
-    // 3. Cấu hình Kênh phát xung (Nối Timer thẳng ra chân STEP phần cứng)
-    ledc_channel_config_t channel_left = {
-        .speed_mode     = LEDC_LOW_SPEED_MODE,
-        .channel        = LEDC_CHANNEL_0,
-        .timer_sel      = LEDC_TIMER_0,
-        .intr_type      = LEDC_INTR_DISABLE,
-        .gpio_num       = STEPPER_LEFT_STEP,
-        .duty           = 0, // Duty = 0 nghĩa là không phát xung (Dừng)
-        .hpoint         = 0
-    };
-    ledc_channel_config(&channel_left);
-
-    ledc_channel_config_t channel_right = {
-        .speed_mode     = LEDC_LOW_SPEED_MODE,
-        .channel        = LEDC_CHANNEL_1,
-        .timer_sel      = LEDC_TIMER_1,
-        .intr_type      = LEDC_INTR_DISABLE,
-        .gpio_num       = STEPPER_RIGHT_STEP,
-        .duty           = 0, 
-        .hpoint         = 0
-    };
-    ledc_channel_config(&channel_right);
+    gptimer_event_callbacks_t cbs_right = { .on_alarm = timer_right_isr };
+    gptimer_register_event_callbacks(timer_right, &cbs_right, NULL);
+    gptimer_enable(timer_right);
 }
 
 void stepper_set_speed(float speed_left, float speed_right) {
-    // --- XỬ LÝ BÁNH TRÁI ---
-    if (fabs(speed_left) < 45.0f) {
-        // Nếu tốc độ quá nhỏ, tắt phát xung để dừng động cơ
-        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 0);
-        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+    // Lưu chiều chuyển động logic trước khi đảo chiều motor phần cứng.
+    // Nhờ vậy khi xe chạy thẳng, bộ đếm hai bánh luôn cùng dấu.
+    const int8_t logical_dir_left = (speed_left >= 0.0f) ? 1 : -1;
+    const int8_t logical_dir_right = (speed_right >= 0.0f) ? 1 : -1;
+
+    // Nhân với hệ số đảo chiều phần cứng
+    speed_left *= LEFT_REVERSE;
+    speed_right *= RIGHT_REVERSE;
+
+    // Xử lý Bánh Trái
+    if (fabs(speed_left) < 10.0f) {
+        if (timer_left_running) {
+            gptimer_stop(timer_left);
+            timer_left_running = false;
+        }
     } else {
-        // Cài đặt chiều quay
-        gpio_set_level(STEPPER_LEFT_DIR, (speed_left > 0) ? 0 : 1);
+        dir_left = logical_dir_left;
+        gpio_set_level(STEPPER_LEFT_DIR, (speed_left > 0) ? 1 : 0);
         
-        // Nạp tần số mới trực tiếp vào phần cứng (Số bước / giây)
-        ledc_set_freq(LEDC_LOW_SPEED_MODE, LEDC_TIMER_0, (uint32_t)fabs(speed_left));
+        // Tính toán chu kỳ ngắt (Micro-giây)
+        uint64_t alarm_val = (uint64_t)(1000000.0f / (fabs(speed_left) * 2.0f));
+        gptimer_alarm_config_t alarm_config = {
+            .alarm_count = alarm_val,
+            .reload_count = 0,
+            .flags.auto_reload_on_alarm = true,
+        };
         
-        // Kích hoạt phát xung với độ rộng 50% (512 / 1023)
-        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, 512);
-        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+        gptimer_set_alarm_action(timer_left, &alarm_config);
+        if (!timer_left_running) {
+            gptimer_start(timer_left);
+            timer_left_running = true;
+        }
     }
 
-    // --- XỬ LÝ BÁNH PHẢI ---
-    if (fabs(speed_right) < 45.0f) {
-        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, 0);
-        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
+    // Xử lý Bánh Phải
+    if (fabs(speed_right) < 10.0f) {
+        if (timer_right_running) {
+            gptimer_stop(timer_right);
+            timer_right_running = false;
+        }
     } else {
-        // Thường bánh phải lắp ngược hướng vật lý với bánh trái, nên logic DIR sẽ đảo lại
+        dir_right = logical_dir_right;
         gpio_set_level(STEPPER_RIGHT_DIR, (speed_right > 0) ? 1 : 0);
         
-        ledc_set_freq(LEDC_LOW_SPEED_MODE, LEDC_TIMER_1, (uint32_t)fabs(speed_right));
+        uint64_t alarm_val = (uint64_t)(1000000.0f / (fabs(speed_right) * 2.0f));
+        gptimer_alarm_config_t alarm_config = {
+            .alarm_count = alarm_val,
+            .reload_count = 0,
+            .flags.auto_reload_on_alarm = true,
+        };
         
-        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1, 512);
-        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_1);
+        gptimer_set_alarm_action(timer_right, &alarm_config);
+        if (!timer_right_running) {
+            gptimer_start(timer_right);
+            timer_right_running = true;
+        }
     }
+}
+
+int32_t stepper_get_left_step(void) { return step_count_left; }
+int32_t stepper_get_right_step(void) { return step_count_right; }
+
+void stepper_reset_step(void) {
+    step_count_left = 0;
+    step_count_right = 0;
 }

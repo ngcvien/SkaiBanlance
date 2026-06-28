@@ -187,35 +187,147 @@ void detect_Task(void *arg)
     vTaskDelete(NULL);
 }
 
+// Thông số điều khiển Vị trí
+float kp_pos = -0.008f;
+// float kp_pos = -0.000f;
+float kd_pos = 0.002f;
+float target_position = 0.0f; 
 
+// void balance_task(void *arg) {
+//     float dt = 0.01f; 
+//     TickType_t xLastWakeTime = xTaskGetTickCount();
+//     const TickType_t xFrequency = pdMS_TO_TICKS(10); 
+
+//     float motor_speed = 0.0f; 
+//     float filtered_motor_speed = 0.0f; 
+
+//     while(1) {
+//         float offset_angle = -0.1f; // Điểm cân bằng vật lý
+//         float current_pitch = mpu6050_get_smoothed_pitch() - offset_angle;
+
+//         if (current_pitch > 45.0f || current_pitch < -45.0f) {
+//             stepper_set_speed(0, 0);
+//             pid_reset(&balance_pid); 
+            
+//             // Xóa bộ đếm phần cứng
+//             stepper_reset_step();
+//             target_position = 0.0f;
+//             motor_speed = 0.0f;
+//             filtered_motor_speed = 0.0f;
+//         } 
+//         else {
+//             filtered_motor_speed = (0.8f * filtered_motor_speed) + (0.2f * motor_speed);
+
+//             // a. Lấy dữ liệu Encoder ảo từ phần cứng
+//             int32_t step_l = stepper_get_left_step();
+//             int32_t step_r = stepper_get_right_step();
+//             float current_position = (step_l + step_r) / 2.0f;
+
+//             // b. Tính sai số vị trí
+//             float pos_error = target_position - current_position;
+
+//             // c. Áp dụng thuật toán (Nhớ đổi dấu kp_pos thành số âm nếu robot bị đẩy trôi nhanh hơn)
+//             float dynamic_target_angle = (pos_error * kp_pos) - (filtered_motor_speed * kd_pos);
+
+//             // d. Khóa an toàn
+//             if (dynamic_target_angle > 1.2f) dynamic_target_angle = 1.2f;
+//             if (dynamic_target_angle < -1.2f) dynamic_target_angle = -1.2f;
+
+//             // e. Tính toán PID Góc
+//             motor_speed = pid_compute(&balance_pid, dynamic_target_angle, current_pitch, dt);
+//             stepper_set_speed(motor_speed, motor_speed);
+//         }
+
+//         vTaskDelayUntil(&xLastWakeTime, xFrequency);
+//     }
+
+
+// 1. Khai báo các thông số cho thuật toán tự học trọng tâm
+float dynamic_offset = -0.1f; // Bắt đầu bằng góc bù vật lý bạn đã đo được bằng tay
+float offset_learning_rate = 0.000004f; // Tốc độ tự học (Phải là một số CỰC KỲ nhỏ)
+
+/// @brief Task cân bằng robot 2 bánh dựa trên dữ liệu góc nghiêng từ MPU6050 và thuật toán PID, 
+/// với khả năng tự học trọng tâm
+/// @param arg 
 void balance_task(void *arg) {
-    float dt = 0.01f; // 10ms = 0.01s
+    float dt = 0.01f; 
     TickType_t xLastWakeTime = xTaskGetTickCount();
-    const TickType_t xFrequency = pdMS_TO_TICKS(10); // Chu kỳ chuẩn xác 10ms
+    const TickType_t xFrequency = pdMS_TO_TICKS(10); 
+
+    float motor_speed = 0.0f; 
+    float filtered_motor_speed = 0.0f; 
 
     while(1) {
-        // 1. Đọc góc nghiêng mượt mà từ MPU6050
-        float current_pitch = mpu6050_get_smoothed_pitch() - (-0.7f); // Hiệu chỉnh nếu cần thiết (ví dụ: nếu robot hơi nghiêng về một bên khi đứng yên)
+        // a. Lọc nhiễu tốc độ động cơ để làm mượt quá trình tự học
+        filtered_motor_speed = (0.8f * filtered_motor_speed) + (0.2f * motor_speed);
 
-        // 2. Kiểm tra an toàn: Nếu ngã quá 45 độ -> Tắt động cơ để bảo vệ
+        // b. Cập nhật góc bù tự động dựa trên tốc độ trôi
+        // LƯU Ý: Nếu xe trôi tới mà càng chạy nhanh hơn, hãy lật dấu cộng (+) thành trừ (-)
+        dynamic_offset += (filtered_motor_speed * offset_learning_rate);
+
+        // c. Khóa an toàn: Không cho phép robot tự bù quá +- 1 độ so với thiết kế gốc
+        if (dynamic_offset > 1.0f) dynamic_offset = 1.0f;
+        if (dynamic_offset < -1.0f) dynamic_offset = -1.0f;
+
+        // d. Đọc góc nghiêng và áp dụng góc bù vừa được tự động tính toán
+        float current_pitch = mpu6050_get_smoothed_pitch() - dynamic_offset;
+
+        // e. Kiểm tra an toàn chống ngã
         if (current_pitch > 45.0f || current_pitch < -45.0f) {
             stepper_set_speed(0, 0);
-            pid_reset(&balance_pid); // Xóa nháp PID
+            pid_reset(&balance_pid); 
+            stepper_reset_step();
+            motor_speed = 0.0f;
+            filtered_motor_speed = 0.0f;
+            
+            // Tùy chọn: Bạn có thể giữ nguyên dynamic_offset để nó nhớ trọng tâm, 
+            // hoặc reset về 2.0f nếu muốn nó học lại từ đầu mỗi khi ngã.
         } 
         else {
-            // 3. Tính toán PID: Mục tiêu (Setpoint) là 0 độ (Đứng thẳng)
-            // Lưu ý: Nếu trọng tâm robot không chuẩn, setpoint có thể là 2.5 độ hoặc -1.0 độ
+            // f. PID Góc chỉ cần cố gắng giữ xe ở mức 0 độ (vì offset đã lo phần trọng tâm)
             float target_angle = 0.0f; 
-            float motor_speed = pid_compute(&balance_pid, target_angle, current_pitch, dt);
 
-            // 4. Bơm tốc độ ra 2 bánh xe
+            // Tính toán PID Góc
+            motor_speed = pid_compute(&balance_pid, target_angle, current_pitch, dt);
+
+            // Truyền xuống Driver điều khiển động cơ
             stepper_set_speed(motor_speed, motor_speed);
         }
 
-        // 5. Ngủ chính xác cho đến chu kỳ tiếp theo (Đảm bảo dt luôn là 0.01s)
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
     }
 }
+
+/// @brief Task cân bằng robot 2 bánh dựa trên dữ liệu góc nghiêng từ MPU6050 và thuật toán PID.
+/// @param arg Tham số truyền vào (không sử dụng trong trường hợp này). 
+// void balance_task(void *arg) {
+//     float dt = 0.01f; // 10ms = 0.01s
+//     TickType_t xLastWakeTime = xTaskGetTickCount();
+//     const TickType_t xFrequency = pdMS_TO_TICKS(10); // Chu kỳ chuẩn xác 10ms
+
+//     while(1) {
+//         // 1. Đọc góc nghiêng mượt mà từ MPU6050
+//         float current_pitch = mpu6050_get_smoothed_pitch() - (-0.1f); // Hiệu chỉnh nếu cần thiết (ví dụ: nếu robot hơi nghiêng về một bên khi đứng yên)
+
+//         // 2. Kiểm tra an toàn: Nếu ngã quá 45 độ -> Tắt động cơ để bảo vệ
+//         if (current_pitch > 45.0f || current_pitch < -45.0f) {
+//             stepper_set_speed(0, 0);
+//             pid_reset(&balance_pid); // Xóa nháp PID
+//         } 
+//         else {
+//             // 3. Tính toán PID: Mục tiêu (Setpoint) là 0 độ (Đứng thẳng)
+//             // Lưu ý: Nếu trọng tâm robot không chuẩn, setpoint có thể là 2.5 độ hoặc -1.0 độ
+//             float target_angle = 0.0f; 
+//             float motor_speed = pid_compute(&balance_pid, target_angle, current_pitch, dt);
+
+//             // 4. Bơm tốc độ ra 2 bánh xe
+//             stepper_set_speed(motor_speed, motor_speed);
+//         }
+
+//         // 5. Ngủ chính xác cho đến chu kỳ tiếp theo (Đảm bảo dt luôn là 0.01s)
+//         vTaskDelayUntil(&xLastWakeTime, xFrequency);
+//     }
+// }
 
 
 void app_main()
@@ -243,11 +355,9 @@ void app_main()
     printf(">>> ĐỘNG CƠ ĐÃ SẴN SÀNG!\n");
 
     mpu6050_init();
-    stepper_driver_init();
 
     // Khởi tạo PID: Kp, Ki, Kd, Tốc độ tối đa (ví dụ 3000 bước/s)
-    // CÁC CHỈ SỐ NÀY ĐANG ĐỂ TẠM, PHẢI TÌM GIÁ TRỊ THỰC TẾ
-    pid_init(&balance_pid, 1250.0f, 0.0f, 0.08f, 25000.0f);
+    pid_init(&balance_pid, 4000.0f, 0.0f, 0.08f, 30000.0f);
 
     // Kích hoạt Task cân bằng (Ưu tiên cao nhất để không bị Bluetooth ngắt quãng)
     xTaskCreate(balance_task, "balance_task", 4096, NULL, 10, NULL);
